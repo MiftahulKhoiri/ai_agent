@@ -12,8 +12,9 @@ from . import ui
 
 
 class Agent:
-    def __init__(self, root):
+    def __init__(self, root, allow_outside_root=False):
         self.root = os.path.abspath(root)
+        self.allow_outside_root = allow_outside_root
         self.tool_schema = tools.load_tool_schema()
         self.messages = [
             {"role": "system", "content": config.SYSTEM_PROMPT},
@@ -23,6 +24,9 @@ class Agent:
     def set_root(self, root):
         self.root = os.path.abspath(root)
         self.messages.append({"role": "user", "content": f"Root project diganti ke: {self.root}"})
+
+    def toggle_outside_root(self, allow):
+        self.allow_outside_root = allow
 
     def reset(self):
         self.messages = [
@@ -50,17 +54,30 @@ class Agent:
 
         if fname in ("write_file", "replace_in_file"):
             ui.stage("code", args.get("path", ""))
-            result = tools.execute_tool_call(tool_call)
+            result = tools.execute_tool_call(tool_call, root=self.root,
+                                              allow_outside_root=self.allow_outside_root)
+            if result.startswith("[BLOKIR]"):
+                ui.stage("error", "path di luar root")
             return result, args.get("path")
 
-        if fname in ("search_files", "read_file"):
-            ui.stage("search", args.get("path", args.get("root", "")))
-            result = tools.execute_tool_call(tool_call)
+        if fname == "list_directory":
+            ui.stage("search", f"struktur folder {args.get('root', '')}")
+            result = tools.execute_tool_call(tool_call, root=self.root)
+            return result, None
+
+        if fname == "search_files":
+            ui.stage("search", args.get("root", ""))
+            result = tools.execute_tool_call(tool_call, root=self.root)
+            return result, None
+
+        if fname == "read_file":
+            ui.stage("search", args.get("path", ""))
+            result = tools.execute_tool_call(tool_call, root=self.root)
             return result, None
 
         if fname == "compile":
             with ui.Spinner("Compile & testing"):
-                result = tools.execute_tool_call(tool_call)
+                result = tools.execute_tool_call(tool_call, root=self.root)
             if "GAGAL" in result:
                 print(result[:600])
                 ui.stage("debug")
@@ -71,12 +88,12 @@ class Agent:
         if fname == "run_shell":
             ui.stage("shell", args.get("cmd", "")[:60])
             with ui.Spinner("Menjalankan"):
-                result = tools.execute_tool_call(tool_call)
+                result = tools.execute_tool_call(tool_call, root=self.root)
             return result, None
 
         # fallback untuk tool baru yang belum punya tampilan khusus
         ui.stage("shell", fname)
-        result = tools.execute_tool_call(tool_call)
+        result = tools.execute_tool_call(tool_call, root=self.root)
         return result, None
 
     def send(self, user_text, max_iter=None):
