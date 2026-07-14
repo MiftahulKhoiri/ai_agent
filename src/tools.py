@@ -157,6 +157,15 @@ def is_within_root(root, target_path):
         # beda drive di Windows, dsb — anggap tidak aman
         return False
 
+def tool_delete_file(path, confirm=False):
+    """Hapus file. Wajib confirm=True dari model supaya tidak terjadi tidak sengaja."""
+    if not confirm:
+        return f"[BLOKIR] Hapus file butuh confirm=true. Path: {path}"
+    if not os.path.isfile(path):
+        return f"[ERROR] File tidak ditemukan: {path}"
+    os.remove(path)
+    return f"[OK] File dihapus: {path}"
+
 
 # ---------------------------------------------------------------------------
 # REGISTRY — daftar semua tool. Tambah tool baru cukup daftarkan di sini.
@@ -168,12 +177,13 @@ TOOL_IMPL = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
     "replace_in_file": tool_replace_in_file,
+    "delete_file": tool_delete_file,
     "compile": tool_compile,
     "run_shell": tool_run_shell,
 }
 
 # tool yang menulis ke disk — wajib lolos path safety guard
-WRITE_TOOLS = {"write_file", "replace_in_file"}
+WRITE_TOOLS = {"write_file", "replace_in_file","delete_file"}
 
 
 def load_tool_schema():
