@@ -12,6 +12,10 @@ import subprocess
 from data import config
 
 
+# ---------------------------------------------------------------------------
+# FILE / FOLDER TOOLS
+# ---------------------------------------------------------------------------
+
 def tool_search_files(root, pattern="*", grep=None, max_results=50):
     """Cari file berdasarkan nama pattern dan/atau isi (grep sederhana)."""
     results = []
@@ -35,10 +39,7 @@ def tool_search_files(root, pattern="*", grep=None, max_results=50):
 
 
 def tool_list_directory(root, max_depth=3):
-    """
-    Tampilkan struktur folder (mirip `tree`) sampai max_depth level.
-    Berguna supaya model/tahu apa saja isi folder tanpa perlu grep.
-    """
+    """Tampilkan struktur folder (mirip `tree`) sampai max_depth level."""
     if not os.path.isdir(root):
         return f"[ERROR] Folder tidak ditemukan: {root}"
 
@@ -104,59 +105,6 @@ def tool_replace_in_file(path, old_str, new_str):
     return f"[OK] {path} diedit."
 
 
-def tool_compile(root):
-    """
-    Otomatis deteksi cara build:
-    - CMakeLists.txt -> cmake + make
-    - Makefile -> make
-    - fallback -> compile semua .cpp langsung dengan g++
-    Return (success: bool, log: str)
-    """
-    cmake_file = os.path.join(root, "CMakeLists.txt")
-    makefile = os.path.join(root, "Makefile")
-
-    if os.path.isfile(cmake_file):
-        build_dir = os.path.join(root, "build")
-        os.makedirs(build_dir, exist_ok=True)
-        cfg = subprocess.run(["cmake", ".."], cwd=build_dir, capture_output=True, text=True)
-        if cfg.returncode != 0:
-            return False, cfg.stdout + cfg.stderr
-        build = subprocess.run(["make", "-j2"], cwd=build_dir, capture_output=True, text=True)
-        return build.returncode == 0, build.stdout + build.stderr
-
-    if os.path.isfile(makefile):
-        build = subprocess.run(["make"], cwd=root, capture_output=True, text=True)
-        return build.returncode == 0, build.stdout + build.stderr
-
-    cpp_files = glob.glob(os.path.join(root, "**", "*.cpp"), recursive=True)
-    if not cpp_files:
-        return False, "[ERROR] Tidak ada CMakeLists.txt, Makefile, atau file .cpp untuk dicompile."
-    out_bin = os.path.join(root, "a.out")
-    cmd = ["g++", "-std=c++17", "-O2", "-o", out_bin] + cpp_files
-    build = subprocess.run(cmd, capture_output=True, text=True)
-    return build.returncode == 0, build.stdout + build.stderr
-
-
-def tool_run_shell(cmd):
-    """Jalankan perintah shell umum (mis. mkdir, ls, python script.py)."""
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-    return f"[exit={r.returncode}]\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
-
-
-# ---------------------------------------------------------------------------
-# PATH SAFETY GUARD — cegah write_file/replace_in_file menulis di luar root aktif
-# ---------------------------------------------------------------------------
-
-def is_within_root(root, target_path):
-    """True kalau target_path berada di dalam root (atau sama dengan root)."""
-    root_abs = os.path.abspath(root)
-    target_abs = os.path.abspath(target_path)
-    try:
-        return os.path.commonpath([root_abs, target_abs]) == root_abs
-    except ValueError:
-        # beda drive di Windows, dsb — anggap tidak aman
-        return False
-
 def tool_delete_file(path, confirm=False):
     """Hapus file. Wajib confirm=True dari model supaya tidak terjadi tidak sengaja."""
     if not confirm:
@@ -167,58 +115,29 @@ def tool_delete_file(path, confirm=False):
     return f"[OK] File dihapus: {path}"
 
 
+def tool_run_shell(cmd):
+    """Jalankan perintah shell umum (mis. mkdir, ls, python script.py)."""
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+    return f"[exit={r.returncode}]\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
+
+
 # ---------------------------------------------------------------------------
-# REGISTRY — daftar semua tool. Tambah tool baru cukup daftarkan di sini.
+# COMPILE / SYNTAX-CHECK — auto-deteksi bahasa per bahasa pemrograman
+# Setiap _compile_xxx return (None, None) kalau bahasa itu tidak ada file-nya
+# di folder, supaya tool_compile lanjut cek bahasa berikutnya.
 # ---------------------------------------------------------------------------
 
-TOOL_IMPL = {
-    "search_files": tool_search_files,
-    "list_directory": tool_list_directory,
-    "read_file": tool_read_file,
-    "write_file": tool_write_file,
-    "replace_in_file": tool_replace_in_file,
-    "delete_file": tool_delete_file,
-    "compile": tool_compile,
-    "run_shell": tool_run_shell,
-}
-
-# tool yang menulis ke disk — wajib lolos path safety guard
-WRITE_TOOLS = {"write_file", "replace_in_file","delete_file"}
-
-
-def load_tool_schema():
-    with open(config.TOOL_SCHEMA_PATH, "r") as f:
-        return json.load(f)
-
-
-def execute_tool_call(tool_call, root=None, allow_outside_root=False):
-    """
-    Jalankan satu tool_call dari model, return hasil sebagai string.
-    root: folder aktif, dipakai untuk guard WRITE_TOOLS.
-    allow_outside_root: kalau True, guard dilewati (dipakai user secara sadar).
-    """
-    name = tool_call["function"]["name"]
-    args = tool_call["function"]["arguments"]
-    if isinstance(args, str):
-        args = json.loads(args)
-
-    if name not in TOOL_IMPL:
-        return f"[ERROR] Tool tidak dikenal: {name}"
-
-    if name in WRITE_TOOLS and root and not allow_outside_root:
-        target = args.get("path", "")
-        if target and not is_within_root(root, target):
-            return (f"[BLOKIR] Path '{target}' berada di luar root aktif ({root}). "
-                     f"Ganti root dengan /root <path>, atau minta user izinkan akses di luar root.")
-
+def _run(cmd, cwd=None):
+    """Wrapper subprocess.run yang menangkap FileNotFoundError (tool belum terpasang)."""
     try:
-        result = TOOL_IMPL[name](**args)
-        if name == "compile":
-            ok, log = result
-            return f"[compile {'SUKSES' if ok else 'GAGAL'}]\n{log[-4000:]}"
-        return str(result)[:6000]
-    except Exception as e:
-        return f"[ERROR] {name} gagal: {e}"
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except FileNotFoundError:
+        class _FakeResult:
+            returncode = 127
+            stdout = ""
+            stderr = f"[ERROR] Perintah '{cmd[0]}' tidak ditemukan. Pastikan sudah terpasang di sistem (mis. sudo apt install {cmd[0]})."
+        return _FakeResult()
+
 
 def _compile_cpp(root):
     """CMake -> Makefile -> fallback g++ semua .cpp"""
@@ -228,22 +147,22 @@ def _compile_cpp(root):
     if os.path.isfile(cmake_file):
         build_dir = os.path.join(root, "build")
         os.makedirs(build_dir, exist_ok=True)
-        cfg = subprocess.run(["cmake", ".."], cwd=build_dir, capture_output=True, text=True)
+        cfg = _run(["cmake", ".."], cwd=build_dir)
         if cfg.returncode != 0:
             return False, cfg.stdout + cfg.stderr
-        build = subprocess.run(["make", "-j2"], cwd=build_dir, capture_output=True, text=True)
+        build = _run(["make", "-j4"], cwd=build_dir)
         return build.returncode == 0, build.stdout + build.stderr
 
     if os.path.isfile(makefile):
-        build = subprocess.run(["make"], cwd=root, capture_output=True, text=True)
+        build = _run(["make"], cwd=root)
         return build.returncode == 0, build.stdout + build.stderr
 
     cpp_files = glob.glob(os.path.join(root, "**", "*.cpp"), recursive=True)
     if not cpp_files:
-        return None, None  # tidak ada file C++, biar dicoba bahasa lain
+        return None, None
     out_bin = os.path.join(root, "a.out")
     cmd = ["g++", "-std=c++17", "-O2", "-o", out_bin] + cpp_files
-    build = subprocess.run(cmd, capture_output=True, text=True)
+    build = _run(cmd)
     return build.returncode == 0, build.stdout + build.stderr
 
 
@@ -253,7 +172,7 @@ def _compile_c(root):
         return None, None
     out_bin = os.path.join(root, "a.out")
     cmd = ["gcc", "-O2", "-o", out_bin] + c_files
-    build = subprocess.run(cmd, capture_output=True, text=True)
+    build = _run(cmd)
     return build.returncode == 0, build.stdout + build.stderr
 
 
@@ -266,7 +185,7 @@ def _compile_python(root):
     log = ""
     ok = True
     for f in py_files:
-        r = subprocess.run(["python3", "-m", "py_compile", f], capture_output=True, text=True)
+        r = _run(["python3", "-m", "py_compile", f])
         if r.returncode != 0:
             ok = False
             log += f"--- {f} ---\n{r.stdout}{r.stderr}\n"
@@ -277,23 +196,22 @@ def _compile_java(root):
     java_files = glob.glob(os.path.join(root, "**", "*.java"), recursive=True)
     if not java_files:
         return None, None
-    build = subprocess.run(["javac"] + java_files, capture_output=True, text=True)
+    build = _run(["javac"] + java_files)
     return build.returncode == 0, build.stdout + build.stderr
 
 
 def _compile_go(root):
-    if not os.path.isfile(os.path.join(root, "go.mod")):
-        go_files = glob.glob(os.path.join(root, "**", "*.go"), recursive=True)
-        if not go_files:
-            return None, None
-    build = subprocess.run(["go", "build", "./..."], cwd=root, capture_output=True, text=True)
+    go_files = glob.glob(os.path.join(root, "**", "*.go"), recursive=True)
+    if not go_files and not os.path.isfile(os.path.join(root, "go.mod")):
+        return None, None
+    build = _run(["go", "build", "./..."], cwd=root)
     return build.returncode == 0, build.stdout + build.stderr
 
 
 def _compile_rust(root):
     cargo_file = os.path.join(root, "Cargo.toml")
     if os.path.isfile(cargo_file):
-        build = subprocess.run(["cargo", "build"], cwd=root, capture_output=True, text=True)
+        build = _run(["cargo", "build"], cwd=root)
         return build.returncode == 0, build.stdout + build.stderr
     rs_files = glob.glob(os.path.join(root, "**", "*.rs"), recursive=True)
     if not rs_files:
@@ -302,7 +220,7 @@ def _compile_rust(root):
     ok = True
     for f in rs_files:
         out_bin = f[:-3] + ".bin"
-        r = subprocess.run(["rustc", "-o", out_bin, f], capture_output=True, text=True)
+        r = _run(["rustc", "-o", out_bin, f])
         if r.returncode != 0:
             ok = False
         log += f"--- {f} ---\n{r.stdout}{r.stderr}\n"
@@ -310,7 +228,7 @@ def _compile_rust(root):
 
 
 def _compile_node(root):
-    """JS/TS tidak dicompile — pakai `node --check` sebagai syntax check."""
+    """JS tidak dicompile — pakai `node --check` sebagai syntax check."""
     js_files = glob.glob(os.path.join(root, "**", "*.js"), recursive=True)
     js_files = [f for f in js_files if "node_modules" not in f]
     if not js_files:
@@ -318,16 +236,14 @@ def _compile_node(root):
     log = ""
     ok = True
     for f in js_files:
-        r = subprocess.run(["node", "--check", f], capture_output=True, text=True)
+        r = _run(["node", "--check", f])
         if r.returncode != 0:
             ok = False
             log += f"--- {f} ---\n{r.stdout}{r.stderr}\n"
     return ok, (log or "Semua file .js lolos syntax check.")
 
 
-# Urutan pengecekan: paling spesifik (ada file build system) duluan,
-# lalu fallback per-ekstensi. Fungsi return (None, None) kalau bahasa itu
-# tidak terdeteksi di folder, supaya lanjut cek bahasa berikutnya.
+# Urutan: paling spesifik (ada file build system) duluan, lalu fallback per-ekstensi.
 _COMPILERS = [
     _compile_cpp,
     _compile_c,
@@ -345,20 +261,85 @@ def tool_compile(root):
     Urutan: CMake/Makefile/g++ (C++) -> gcc (C) -> cargo/rustc (Rust)
             -> go build (Go) -> javac (Java) -> py_compile (Python)
             -> node --check (JS).
-    Return (success: bool, log: str). Kalau tidak ada bahasa yang dikenali,
-    success=False dengan pesan error.
+    Return (success: bool, log: str).
     """
     if not os.path.isdir(root):
         return False, f"[ERROR] Folder tidak ditemukan: {root}"
 
-    tried = []
     for compiler_fn in _COMPILERS:
         ok, log = compiler_fn(root)
         if ok is None:
             continue  # bahasa ini tidak ada file-nya, coba berikutnya
-        tried.append(compiler_fn.__name__)
         return ok, log
 
     return False, ("[ERROR] Tidak ada file source yang dikenali di folder ini "
                     "(.cpp/.c/.rs/.go/.java/.py/.js) atau tool compiler-nya "
                     "tidak terpasang di sistem.")
+
+
+# ---------------------------------------------------------------------------
+# PATH SAFETY GUARD — cegah write_file/replace_in_file/delete_file di luar root
+# ---------------------------------------------------------------------------
+
+def is_within_root(root, target_path):
+    """True kalau target_path berada di dalam root (atau sama dengan root)."""
+    root_abs = os.path.abspath(root)
+    target_abs = os.path.abspath(target_path)
+    try:
+        return os.path.commonpath([root_abs, target_abs]) == root_abs
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# REGISTRY — daftar semua tool. Tambah tool baru cukup daftarkan di sini.
+# ---------------------------------------------------------------------------
+
+TOOL_IMPL = {
+    "search_files": tool_search_files,
+    "list_directory": tool_list_directory,
+    "read_file": tool_read_file,
+    "write_file": tool_write_file,
+    "replace_in_file": tool_replace_in_file,
+    "delete_file": tool_delete_file,
+    "compile": tool_compile,
+    "run_shell": tool_run_shell,
+}
+
+# tool yang menulis/menghapus di disk — wajib lolos path safety guard
+WRITE_TOOLS = {"write_file", "replace_in_file", "delete_file"}
+
+
+def load_tool_schema():
+    with open(config.TOOL_SCHEMA_PATH, "r") as f:
+        return json.load(f)
+
+
+def execute_tool_call(tool_call, root=None, allow_outside_root=False):
+    """
+    Jalankan satu tool_call dari model, return hasil sebagai string.
+    root: folder aktif, dipakai untuk guard WRITE_TOOLS.
+    allow_outside_root: kalau True, guard dilewati.
+    """
+    name = tool_call["function"]["name"]
+    args = tool_call["function"]["arguments"]
+    if isinstance(args, str):
+        args = json.loads(args)
+
+    if name not in TOOL_IMPL:
+        return f"[ERROR] Tool tidak dikenal: {name}"
+
+    if name in WRITE_TOOLS and root and not allow_outside_root:
+        target = args.get("path", "")
+        if target and not is_within_root(root, target):
+            return (f"[BLOKIR] Path '{target}' berada di luar root aktif ({root}). "
+                     f"Ganti root dengan /root <path>, atau izinkan akses di luar root.")
+
+    try:
+        result = TOOL_IMPL[name](**args)
+        if name == "compile":
+            ok, log = result
+            return f"[compile {'SUKSES' if ok else 'GAGAL'}]\n{log[-4000:]}"
+        return str(result)[:6000]
+    except Exception as e:
+        return f"[ERROR] {name} gagal: {e}"
