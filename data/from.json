@@ -1,0 +1,90 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_files",
+      "description": "Cari file berdasarkan nama pattern dan/atau isi.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "root": {"type": "string"},
+          "pattern": {"type": "string"},
+          "grep": {"type": "string"}
+        },
+        "required": ["root"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Baca isi file dengan nomor baris.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "start": {"type": "integer"},
+          "end": {"type": "integer"}
+        },
+        "required": ["path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write_file",
+      "description": "Tulis/timpa file baru atau append.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "content": {"type": "string"},
+          "mode": {"type": "string"}
+        },
+        "required": ["path", "content"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "replace_in_file",
+      "description": "Edit presisi: ganti satu blok teks unik di file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "old_str": {"type": "string"},
+          "new_str": {"type": "string"}
+        },
+        "required": ["path", "old_str", "new_str"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "compile",
+      "description": "Compile project (auto-deteksi cmake/make/g++).",
+      "parameters": {
+        "type": "object",
+        "properties": {"root": {"type": "string"}},
+        "required": ["root"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_shell",
+      "description": "Jalankan perintah shell arbitrer.",
+      "parameters": {
+        "type": "object",
+        "properties": {"cmd": {"type": "string"}},
+        "required": ["cmd"]
+      }
+    }
+  }
+]
