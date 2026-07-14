@@ -1,4 +1,4 @@
-"""agent.py — implementasi tools + loop agent"""
+"""src/agent.py — tools + session agent multi-turn"""
 
 import os
 import json
@@ -7,7 +7,7 @@ import fnmatch
 import subprocess
 import requests
 
-from data config import config
+from data import config
 
 # ---------------------------------------------------------------------------
 # TOOLS — implementasi aktual (dijalankan lokal, bukan oleh model)
@@ -126,22 +126,6 @@ def load_tool_schema():
         return json.load(f)
 
 
-# ---------------------------------------------------------------------------
-# MODEL CALL + AGENT LOOP
-# ---------------------------------------------------------------------------
-
-def call_model(messages, tool_schema):
-    resp = requests.post(config.OLLAMA_URL, json={
-        "model": config.MODEL,
-        "messages": messages,
-        "tools": tool_schema,
-        "stream": False,
-        "options": {"temperature": config.TEMPERATURE},
-    }, timeout=config.REQUEST_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()["message"]
-
-
 def execute_tool_call(tool_call):
     name = tool_call["function"]["name"]
     args = tool_call["function"]["arguments"]
@@ -159,30 +143,58 @@ def execute_tool_call(tool_call):
         return f"[ERROR] {name} gagal: {e}"
 
 
-def run_agent(task, root, max_iter=None):
-    max_iter = max_iter or config.MAX_ITER_DEFAULT
-    tool_schema = load_tool_schema()
+# ---------------------------------------------------------------------------
+# SESSION AGENT — mempertahankan histori percakapan seperti chatbot
+# ---------------------------------------------------------------------------
 
-    messages = [
-        {"role": "system", "content": config.SYSTEM_PROMPT},
-        {"role": "user", "content": f"Root project: {root}\nTugas: {task}"},
-    ]
+class Agent:
+    def __init__(self, root):
+        self.root = os.path.abspath(root)
+        self.tool_schema = load_tool_schema()
+        self.messages = [
+            {"role": "system", "content": config.SYSTEM_PROMPT},
+            {"role": "user", "content": f"Root project aktif: {self.root}"},
+        ]
 
-    for step in range(1, max_iter + 1):
-        print(f"\n=== Iterasi {step} ===")
-        msg = call_model(messages, tool_schema)
-        messages.append(msg)
+    def set_root(self, root):
+        self.root = os.path.abspath(root)
+        self.messages.append({"role": "user", "content": f"Root project diganti ke: {self.root}"})
 
-        tool_calls = msg.get("tool_calls")
-        if not tool_calls:
-            print("[AGENT]", msg.get("content", ""))
-            return
+    def reset(self):
+        self.messages = [
+            {"role": "system", "content": config.SYSTEM_PROMPT},
+            {"role": "user", "content": f"Root project aktif: {self.root}"},
+        ]
 
-        for tc in tool_calls:
-            fname = tc["function"]["name"]
-            print(f"-> memanggil tool: {fname}({tc['function']['arguments']})")
-            result = execute_tool_call(tc)
-            print(result[:800])
-            messages.append({"role": "tool", "content": result})
+    def _call_model(self):
+        resp = requests.post(config.OLLAMA_URL, json={
+            "model": config.MODEL,
+            "messages": self.messages,
+            "tools": self.tool_schema,
+            "stream": False,
+            "options": {"temperature": config.TEMPERATURE},
+        }, timeout=config.REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()["message"]
 
-    print("\n[STOP] Batas iterasi tercapai tanpa penyelesaian eksplisit dari model.")
+    def send(self, user_text, max_iter=None):
+        """Kirim satu pesan user, jalankan loop tool sampai model kasih jawaban teks."""
+        max_iter = max_iter or config.MAX_ITER_DEFAULT
+        self.messages.append({"role": "user", "content": user_text})
+
+        for step in range(1, max_iter + 1):
+            msg = self._call_model()
+            self.messages.append(msg)
+
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                return msg.get("content", "")
+
+            for tc in tool_calls:
+                fname = tc["function"]["name"]
+                print(f"  -> tool: {fname}({tc['function']['arguments']})")
+                result = execute_tool_call(tc)
+                print(f"     {result[:400]}")
+                self.messages.append({"role": "tool", "content": result})
+
+        return "[STOP] Batas iterasi tercapai tanpa jawaban akhir dari model."
