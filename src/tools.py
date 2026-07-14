@@ -34,6 +34,39 @@ def tool_search_files(root, pattern="*", grep=None, max_results=50):
     return results
 
 
+def tool_list_directory(root, max_depth=3):
+    """
+    Tampilkan struktur folder (mirip `tree`) sampai max_depth level.
+    Berguna supaya model/tahu apa saja isi folder tanpa perlu grep.
+    """
+    if not os.path.isdir(root):
+        return f"[ERROR] Folder tidak ditemukan: {root}"
+
+    lines = [root]
+    skip_dirs = {".git", "build", "node_modules", "__pycache__"}
+
+    def walk(dir_path, prefix, depth):
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(os.listdir(dir_path))
+        except PermissionError:
+            lines.append(f"{prefix}[permission denied]")
+            return
+        entries = [e for e in entries if e not in skip_dirs]
+        for i, entry in enumerate(entries):
+            full = os.path.join(dir_path, entry)
+            is_last = (i == len(entries) - 1)
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{prefix}{connector}{entry}{'/' if os.path.isdir(full) else ''}")
+            if os.path.isdir(full):
+                extension = "    " if is_last else "│   "
+                walk(full, prefix + extension, depth + 1)
+
+    walk(root, "", 1)
+    return "\n".join(lines)
+
+
 def tool_read_file(path, start=1, end=None):
     """Baca isi file, opsional dengan rentang baris."""
     if not os.path.isfile(path):
@@ -111,11 +144,27 @@ def tool_run_shell(cmd):
 
 
 # ---------------------------------------------------------------------------
+# PATH SAFETY GUARD — cegah write_file/replace_in_file menulis di luar root aktif
+# ---------------------------------------------------------------------------
+
+def is_within_root(root, target_path):
+    """True kalau target_path berada di dalam root (atau sama dengan root)."""
+    root_abs = os.path.abspath(root)
+    target_abs = os.path.abspath(target_path)
+    try:
+        return os.path.commonpath([root_abs, target_abs]) == root_abs
+    except ValueError:
+        # beda drive di Windows, dsb — anggap tidak aman
+        return False
+
+
+# ---------------------------------------------------------------------------
 # REGISTRY — daftar semua tool. Tambah tool baru cukup daftarkan di sini.
 # ---------------------------------------------------------------------------
 
 TOOL_IMPL = {
     "search_files": tool_search_files,
+    "list_directory": tool_list_directory,
     "read_file": tool_read_file,
     "write_file": tool_write_file,
     "replace_in_file": tool_replace_in_file,
@@ -123,20 +172,35 @@ TOOL_IMPL = {
     "run_shell": tool_run_shell,
 }
 
+# tool yang menulis ke disk — wajib lolos path safety guard
+WRITE_TOOLS = {"write_file", "replace_in_file"}
+
 
 def load_tool_schema():
     with open(config.TOOL_SCHEMA_PATH, "r") as f:
         return json.load(f)
 
 
-def execute_tool_call(tool_call):
-    """Jalankan satu tool_call dari model, return hasil sebagai string."""
+def execute_tool_call(tool_call, root=None, allow_outside_root=False):
+    """
+    Jalankan satu tool_call dari model, return hasil sebagai string.
+    root: folder aktif, dipakai untuk guard WRITE_TOOLS.
+    allow_outside_root: kalau True, guard dilewati (dipakai user secara sadar).
+    """
     name = tool_call["function"]["name"]
     args = tool_call["function"]["arguments"]
     if isinstance(args, str):
         args = json.loads(args)
+
     if name not in TOOL_IMPL:
         return f"[ERROR] Tool tidak dikenal: {name}"
+
+    if name in WRITE_TOOLS and root and not allow_outside_root:
+        target = args.get("path", "")
+        if target and not is_within_root(root, target):
+            return (f"[BLOKIR] Path '{target}' berada di luar root aktif ({root}). "
+                     f"Ganti root dengan /root <path>, atau minta user izinkan akses di luar root.")
+
     try:
         result = TOOL_IMPL[name](**args)
         if name == "compile":
