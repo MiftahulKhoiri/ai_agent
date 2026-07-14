@@ -74,6 +74,13 @@ class Agent:
             ui.stage("search", args.get("path", ""))
             result = tools.execute_tool_call(tool_call, root=self.root)
             return result, None
+        if fname == "delete_file":
+            ui.stage("delete", args.get("path", ""))
+            result = tools.execute_tool_call(tool_call, root=self.root,
+                                              allow_outside_root=self.allow_outside_root)
+            if result.startswith("[BLOKIR]"):
+                ui.stage("error", "hapus diblokir")
+            return result, None
 
         if fname == "compile":
             with ui.Spinner("Compile & testing"):
