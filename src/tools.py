@@ -219,3 +219,146 @@ def execute_tool_call(tool_call, root=None, allow_outside_root=False):
         return str(result)[:6000]
     except Exception as e:
         return f"[ERROR] {name} gagal: {e}"
+
+def _compile_cpp(root):
+    """CMake -> Makefile -> fallback g++ semua .cpp"""
+    cmake_file = os.path.join(root, "CMakeLists.txt")
+    makefile = os.path.join(root, "Makefile")
+
+    if os.path.isfile(cmake_file):
+        build_dir = os.path.join(root, "build")
+        os.makedirs(build_dir, exist_ok=True)
+        cfg = subprocess.run(["cmake", ".."], cwd=build_dir, capture_output=True, text=True)
+        if cfg.returncode != 0:
+            return False, cfg.stdout + cfg.stderr
+        build = subprocess.run(["make", "-j2"], cwd=build_dir, capture_output=True, text=True)
+        return build.returncode == 0, build.stdout + build.stderr
+
+    if os.path.isfile(makefile):
+        build = subprocess.run(["make"], cwd=root, capture_output=True, text=True)
+        return build.returncode == 0, build.stdout + build.stderr
+
+    cpp_files = glob.glob(os.path.join(root, "**", "*.cpp"), recursive=True)
+    if not cpp_files:
+        return None, None  # tidak ada file C++, biar dicoba bahasa lain
+    out_bin = os.path.join(root, "a.out")
+    cmd = ["g++", "-std=c++17", "-O2", "-o", out_bin] + cpp_files
+    build = subprocess.run(cmd, capture_output=True, text=True)
+    return build.returncode == 0, build.stdout + build.stderr
+
+
+def _compile_c(root):
+    c_files = glob.glob(os.path.join(root, "**", "*.c"), recursive=True)
+    if not c_files:
+        return None, None
+    out_bin = os.path.join(root, "a.out")
+    cmd = ["gcc", "-O2", "-o", out_bin] + c_files
+    build = subprocess.run(cmd, capture_output=True, text=True)
+    return build.returncode == 0, build.stdout + build.stderr
+
+
+def _compile_python(root):
+    """Python tidak dicompile beneran — cek syntax semua .py dengan py_compile."""
+    py_files = glob.glob(os.path.join(root, "**", "*.py"), recursive=True)
+    py_files = [f for f in py_files if "__pycache__" not in f]
+    if not py_files:
+        return None, None
+    log = ""
+    ok = True
+    for f in py_files:
+        r = subprocess.run(["python3", "-m", "py_compile", f], capture_output=True, text=True)
+        if r.returncode != 0:
+            ok = False
+            log += f"--- {f} ---\n{r.stdout}{r.stderr}\n"
+    return ok, (log or "Semua file .py lolos syntax check.")
+
+
+def _compile_java(root):
+    java_files = glob.glob(os.path.join(root, "**", "*.java"), recursive=True)
+    if not java_files:
+        return None, None
+    build = subprocess.run(["javac"] + java_files, capture_output=True, text=True)
+    return build.returncode == 0, build.stdout + build.stderr
+
+
+def _compile_go(root):
+    if not os.path.isfile(os.path.join(root, "go.mod")):
+        go_files = glob.glob(os.path.join(root, "**", "*.go"), recursive=True)
+        if not go_files:
+            return None, None
+    build = subprocess.run(["go", "build", "./..."], cwd=root, capture_output=True, text=True)
+    return build.returncode == 0, build.stdout + build.stderr
+
+
+def _compile_rust(root):
+    cargo_file = os.path.join(root, "Cargo.toml")
+    if os.path.isfile(cargo_file):
+        build = subprocess.run(["cargo", "build"], cwd=root, capture_output=True, text=True)
+        return build.returncode == 0, build.stdout + build.stderr
+    rs_files = glob.glob(os.path.join(root, "**", "*.rs"), recursive=True)
+    if not rs_files:
+        return None, None
+    log = ""
+    ok = True
+    for f in rs_files:
+        out_bin = f[:-3] + ".bin"
+        r = subprocess.run(["rustc", "-o", out_bin, f], capture_output=True, text=True)
+        if r.returncode != 0:
+            ok = False
+        log += f"--- {f} ---\n{r.stdout}{r.stderr}\n"
+    return ok, log
+
+
+def _compile_node(root):
+    """JS/TS tidak dicompile — pakai `node --check` sebagai syntax check."""
+    js_files = glob.glob(os.path.join(root, "**", "*.js"), recursive=True)
+    js_files = [f for f in js_files if "node_modules" not in f]
+    if not js_files:
+        return None, None
+    log = ""
+    ok = True
+    for f in js_files:
+        r = subprocess.run(["node", "--check", f], capture_output=True, text=True)
+        if r.returncode != 0:
+            ok = False
+            log += f"--- {f} ---\n{r.stdout}{r.stderr}\n"
+    return ok, (log or "Semua file .js lolos syntax check.")
+
+
+# Urutan pengecekan: paling spesifik (ada file build system) duluan,
+# lalu fallback per-ekstensi. Fungsi return (None, None) kalau bahasa itu
+# tidak terdeteksi di folder, supaya lanjut cek bahasa berikutnya.
+_COMPILERS = [
+    _compile_cpp,
+    _compile_c,
+    _compile_rust,
+    _compile_go,
+    _compile_java,
+    _compile_python,
+    _compile_node,
+]
+
+
+def tool_compile(root):
+    """
+    Auto-deteksi bahasa/build-system di folder root, lalu compile/syntax-check.
+    Urutan: CMake/Makefile/g++ (C++) -> gcc (C) -> cargo/rustc (Rust)
+            -> go build (Go) -> javac (Java) -> py_compile (Python)
+            -> node --check (JS).
+    Return (success: bool, log: str). Kalau tidak ada bahasa yang dikenali,
+    success=False dengan pesan error.
+    """
+    if not os.path.isdir(root):
+        return False, f"[ERROR] Folder tidak ditemukan: {root}"
+
+    tried = []
+    for compiler_fn in _COMPILERS:
+        ok, log = compiler_fn(root)
+        if ok is None:
+            continue  # bahasa ini tidak ada file-nya, coba berikutnya
+        tried.append(compiler_fn.__name__)
+        return ok, log
+
+    return False, ("[ERROR] Tidak ada file source yang dikenali di folder ini "
+                    "(.cpp/.c/.rs/.go/.java/.py/.js) atau tool compiler-nya "
+                    "tidak terpasang di sistem.")
