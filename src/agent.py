@@ -7,7 +7,7 @@ import fnmatch
 import subprocess
 import requests
 
-import config
+from data config import config
 
 # ---------------------------------------------------------------------------
 # TOOLS — implementasi aktual (dijalankan lokal, bukan oleh model)
