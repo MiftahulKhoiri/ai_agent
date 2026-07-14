@@ -40,7 +40,10 @@ class Agent:
             "messages": self.messages,
             "tools": self.tool_schema,
             "stream": False,
-            "options": {"temperature": config.TEMPERATURE},
+            "options": {
+                "temperature": config.TEMPERATURE,
+                "num_thread": config.NUM_THREAD,
+            },
         }, timeout=config.REQUEST_TIMEOUT)
         resp.raise_for_status()
         return resp.json()["message"]
