@@ -100,4 +100,20 @@
       },
       "required": ["root"]
     }
+  },
+  {
+  "type": "function",
+  "function": {
+    "name": "delete_file",
+    "description": "Hapus file. Wajib set confirm=true, kalau tidak akan diblokir.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "confirm": {"type": "boolean"}
+      },
+      "required": ["path", "confirm"]
+    }
   }
+}
+
