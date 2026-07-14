@@ -35,18 +35,56 @@ class Agent:
         ]
 
     def _call_model(self):
+        """
+        Panggil model dengan stream=True supaya token muncul langsung
+        (seperti `ollama run` biasa) — tidak terlihat macet saat menunggu.
+        Mengembalikan message dict yang sama formatnya seperti mode non-stream,
+        supaya sisa kode (send/_dispatch) tidak perlu berubah.
+        """
         resp = requests.post(config.OLLAMA_URL, json={
             "model": config.MODEL,
             "messages": self.messages,
             "tools": self.tool_schema,
-            "stream": False,
+            "stream": True,
             "options": {
                 "temperature": config.TEMPERATURE,
-                "num_thread": config.NUM_THREAD,
+                "num_thread": getattr(config, "NUM_THREAD", 4),
             },
-        }, timeout=config.REQUEST_TIMEOUT)
+        }, timeout=config.REQUEST_TIMEOUT, stream=True)
         resp.raise_for_status()
-        return resp.json()["message"]
+
+        ui.stage("think")
+        print("   ", end="", flush=True)
+
+        full_content = ""
+        tool_calls = None
+        printed_anything = False
+
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line)
+            piece = chunk.get("message", {})
+
+            piece_content = piece.get("content", "")
+            if piece_content:
+                print(piece_content, end="", flush=True)
+                full_content += piece_content
+                printed_anything = True
+
+            if piece.get("tool_calls"):
+                tool_calls = piece["tool_calls"]
+
+            if chunk.get("done"):
+                break
+
+        if printed_anything:
+            print()  # newline setelah streaming selesai
+
+        message = {"role": "assistant", "content": full_content}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        return message
 
     def _dispatch(self, tool_call):
         """Pilih tampilan tahap yang sesuai berdasarkan nama tool, lalu eksekusi."""
@@ -77,6 +115,7 @@ class Agent:
             ui.stage("search", args.get("path", ""))
             result = tools.execute_tool_call(tool_call, root=self.root)
             return result, None
+
         if fname == "delete_file":
             ui.stage("delete", args.get("path", ""))
             result = tools.execute_tool_call(tool_call, root=self.root,
@@ -101,7 +140,6 @@ class Agent:
                 result = tools.execute_tool_call(tool_call, root=self.root)
             return result, None
 
-        # fallback untuk tool baru yang belum punya tampilan khusus
         ui.stage("shell", fname)
         result = tools.execute_tool_call(tool_call, root=self.root)
         return result, None
@@ -109,7 +147,8 @@ class Agent:
     def send(self, user_text, max_iter=None):
         """
         Kirim satu pesan user, jalankan loop tool dengan tahapan terlihat
-        sampai model memberi jawaban teks akhir.
+        (termasuk streaming teks berpikir model secara live) sampai model
+        memberi jawaban teks akhir.
         Return: (reply_text, set_file_yang_diubah)
         """
         max_iter = max_iter or config.MAX_ITER_DEFAULT
@@ -117,8 +156,7 @@ class Agent:
         touched_files = set()
 
         for step in range(1, max_iter + 1):
-            ui.stage("think")
-            msg = self._call_model()
+            msg = self._call_model()  # sudah print stage("think") + stream isi di dalamnya
             self.messages.append(msg)
 
             tool_calls = msg.get("tool_calls")
