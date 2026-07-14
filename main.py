@@ -7,6 +7,7 @@ import requests
 
 from data import config
 from src.agent import Agent
+from src import tools
 
 
 def check_ollama():
@@ -18,10 +19,13 @@ def check_ollama():
 
 
 HELP_TEXT = """Perintah tersedia:
-  /root <path>   ganti root project aktif
-  /reset         hapus histori percakapan (mulai sesi baru)
-  /help          tampilkan pesan ini
-  /exit          keluar
+  /root <path>       ganti root project aktif
+  /ls [path]         tampilkan struktur folder langsung (tanpa lewat model)
+  /allow-outside on  izinkan agent menulis file di luar root aktif
+  /allow-outside off kembali batasi ke root aktif (default)
+  /reset             hapus histori percakapan (mulai sesi baru)
+  /help              tampilkan pesan ini
+  /exit              keluar
 Ketik pesan biasa untuk memberi tugas ke agent."""
 
 
@@ -53,7 +57,6 @@ def main():
 
         if not user_input:
             continue
-
         if user_input == "/exit":
             print("Keluar.")
             break
@@ -69,9 +72,27 @@ def main():
             agent.set_root(new_root)
             print(f"[OK] Root diganti ke: {agent.root}")
             continue
+        elif user_input.startswith("/ls"):
+            target = user_input[len("/ls"):].strip() or agent.root
+            print(tools.tool_list_directory(target))
+            continue
+        elif user_input == "/allow-outside on":
+            agent.toggle_outside_root(True)
+            print("[OK] Agent boleh menulis file di luar root aktif.")
+            continue
+        elif user_input == "/allow-outside off":
+            agent.toggle_outside_root(False)
+            print("[OK] Agent dibatasi ke root aktif lagi.")
+            continue
 
-        reply = agent.send(user_input, max_iter=args.max_iter)
+        reply, touched_files = agent.send(user_input, max_iter=args.max_iter)
         print(f"\nagent> {reply}\n")
+
+        if touched_files:
+            print("📁 File yang diubah/dibuat:")
+            for f in sorted(touched_files):
+                print(f"   - {f}")
+            print()
 
 
 if __name__ == "__main__":
