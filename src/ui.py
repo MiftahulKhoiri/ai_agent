@@ -12,6 +12,7 @@ STAGE_ICONS = {
     "compile": "⚙️ ",
     "shell": "🖥️ ",
     "debug": "🐛",
+    "delete": "🗑️ ",
     "result": "✅",
     "error": "❌",
 }
@@ -23,10 +24,10 @@ STAGE_LABELS = {
     "compile": "Compile & testing",
     "shell": "Menjalankan perintah",
     "debug": "Debugging: memperbaiki error",
+    "delete": "Menghapus file",
     "result": "Hasil",
     "error": "Error",
 }
-
 
 def stage(key, detail=""):
     icon = STAGE_ICONS.get(key, "•")
