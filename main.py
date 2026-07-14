@@ -5,8 +5,8 @@ import sys
 import argparse
 import requests
 
-import config
-import agent
+from data import config
+from src import agent
 
 
 def check_ollama():
