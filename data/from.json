@@ -86,5 +86,19 @@
         "required": ["cmd"]
       }
     }
+  },
+  {
+  "type": "function",
+  "function": {
+    "name": "list_directory",
+    "description": "Tampilkan struktur folder (seperti tree) sampai kedalaman tertentu.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": {"type": "string"},
+        "max_depth": {"type": "integer"}
+      },
+      "required": ["root"]
+    }
   }
 ]
