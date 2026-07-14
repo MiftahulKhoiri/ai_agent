@@ -18,6 +18,21 @@
   {
     "type": "function",
     "function": {
+      "name": "list_directory",
+      "description": "Tampilkan struktur folder (seperti tree) sampai kedalaman tertentu.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "root": {"type": "string"},
+          "max_depth": {"type": "integer"}
+        },
+        "required": ["root"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "read_file",
       "description": "Baca isi file dengan nomor baris.",
       "parameters": {
@@ -66,8 +81,23 @@
   {
     "type": "function",
     "function": {
+      "name": "delete_file",
+      "description": "Hapus file. Wajib set confirm=true, kalau tidak akan diblokir.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "confirm": {"type": "boolean"}
+        },
+        "required": ["path", "confirm"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "compile",
-      "description": "Compile project (auto-deteksi cmake/make/g++).",
+      "description": "Compile atau syntax-check project (auto-deteksi bahasa: C++, C, Python, JS, Java, Go, Rust).",
       "parameters": {
         "type": "object",
         "properties": {"root": {"type": "string"}},
@@ -86,34 +116,5 @@
         "required": ["cmd"]
       }
     }
-  },
-  {
-  "type": "function",
-  "function": {
-    "name": "list_directory",
-    "description": "Tampilkan struktur folder (seperti tree) sampai kedalaman tertentu.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "root": {"type": "string"},
-        "max_depth": {"type": "integer"}
-      },
-      "required": ["root"]
-    }
-  },
-  {
-  "type": "function",
-  "function": {
-    "name": "delete_file",
-    "description": "Hapus file. Wajib set confirm=true, kalau tidak akan diblokir.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "path": {"type": "string"},
-        "confirm": {"type": "boolean"}
-      },
-      "required": ["path", "confirm"]
-    }
   }
-}
-
+]
